@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>欧菲服饰店经营工作台</title>
 <script src="https://cdn.tailwindcss.com"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.8/dist/chart.umd.min.js"></script>
 <script>
 tailwind.config = {
@@ -25,6 +26,20 @@ input,select{min-height:46px;font-size:17px;}
 </style>
 </head>
 <body class="bg-amber-50 pb-20">
+<div id="loginPanel" class="p-4 max-w-md mx-auto">
+<h1 class="text-xl font-bold mb-4">欧菲服饰店 · 登录</h1>
+<p class="mb-4">登录后，销售、记账、欠款和库存保存在云端。</p>
+<form id="loginForm" class="bg-white p-4 rounded shadow">
+<label for="email">邮箱</label><input id="email" type="email" autocomplete="username" required class="w-full border rounded mb-3 px-2">
+<label for="password">密码</label><input id="password" type="password" autocomplete="current-password" required class="w-full border rounded mb-3 px-2">
+<button id="loginButton" class="w-full bg-primary text-white rounded" type="submit">登录</button>
+</form><p id="loginMessage" role="status" class="my-3"></p></div>
+<div id="shopApp" hidden>
+<div class="bg-white p-3"><span id="accountEmail"></span>
+<button onclick="refreshCloud()" class="border rounded px-3">刷新云端</button>
+<button onclick="exportBackup()" class="border rounded px-3">导出备份</button>
+<button onclick="logout()" class="border rounded px-3">退出登录</button>
+<p id="cloudStatus" role="status"></p></div>
 <div class="bg-primary text-white p-4 text-center text-xl font-bold">欧菲服饰店经营工作台</div>
 
 <!-- 看板 -->
@@ -128,20 +143,113 @@ input,select{min-height:46px;font-size:17px;}
 <button onclick="switchTab('stock')" class="flex-1 py-3 tab-btn">📦库存</button>
 </div>
 
+</div>
 <script>
-// 本地存储key
-const KEY={sale:"of_sale",acc:"of_acc",sup:"of_sup",stock:"of_stock"}
-// 初始化数据
-function loadData(){
-  return{
-    sale:JSON.parse(localStorage.getItem(KEY.sale)||"[]"),
-    acc:JSON.parse(localStorage.getItem(KEY.acc)||"[]"),
-    sup:JSON.parse(localStorage.getItem(KEY.sup)||"[]"),
-    stock:JSON.parse(localStorage.getItem(KEY.stock)||"[]")
+
+const KEY={sale:"of_sale",acc:"of_acc",sup:"of_sup",stock:"of_stock"};
+const TABLES={of_sale:"sale",of_acc:"account",of_sup:"supplier",of_stock:"stock"};
+const db=window.supabase ? window.supabase.createClient(
+  "https://eqnyylfxqnuzmgdgnzxa.supabase.co",
+  "sb_publishable_ywh4JWu-CwYSQg7xjLus0w_eItKAGK7"
+) : null;
+let currentUser=null, writing=false, loading=false;
+let cloudData={sale:[],acc:[],sup:[],stock:[]};
+const escapeHTML=value=>String(value??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+function loadData(){return structuredClone(cloudData)}
+function status(message){document.getElementById("cloudStatus").textContent=message}
+function fromRow(table,row){
+  const x={...row};
+  if(table==="sale"){x.totalSale=Number(x.totalsale);x.totalProfit=Number(x.totalprofit);x.receive=Number(x.receive)}
+  if(table==="supplier"){x.startDate=x.startdate;x.endDate=x.enddate}
+  return x;
+}
+function toRow(table,item){
+  const columns={
+    sale:["date","items","totalSale","totalProfit","receive"],
+    account:["date","type","cate","money","remark"],
+    supplier:["name","money","startDate","endDate","remark"],
+    stock:["name","cost","num"]
+  };
+  const row={user_id:currentUser.id};
+  for(const field of columns[table]) row[field.toLowerCase()]=item[field];
+  return row;
+}
+async function saveData(key,data){
+  if(!currentUser) throw new Error("请先登录");
+  const table=TABLES[key], item=data[data.length-1];
+  const {data:rows,error}=await db.from(table).insert(toRow(table,item)).select();
+  if(error) throw error;
+  if(!rows || rows.length!==1) throw new Error("未确认保存结果，请刷新云端核对，勿重复提交");
+  const name=Object.keys(KEY).find(name=>KEY[name]===key);
+  cloudData[name].push(fromRow(table,rows[0]));
+  status("已保存到云端 · "+new Date().toLocaleTimeString());
+}
+async function fetchAll(table,uid){
+  const rows=[];
+  for(let offset=0;;offset+=500){
+    const {data,error}=await db.from(table).select("*").eq("user_id",uid).order("id").range(offset,offset+499);
+    if(error) throw error;
+    rows.push(...data.map(row=>fromRow(table,row)));
+    if(data.length<500) return rows;
   }
 }
-function saveData(key,data){
-  localStorage.setItem(key,JSON.stringify(data));
+async function refreshCloud(){
+  if(!currentUser || writing || loading) return;
+  loading=true;status("正在读取云端数据…");
+  try{
+    const uid=currentUser.id;
+    const lists=await Promise.all(Object.values(TABLES).map(t=>fetchAll(t,uid)));
+    if(currentUser?.id!==uid) return;
+    cloudData={sale:lists[0],acc:lists[1],sup:lists[2],stock:lists[3]};
+    renderAll();status("云端数据已更新");
+  }catch(error){status("读取失败："+error.message+"。请检查网络后点击刷新云端。")}
+  finally{loading=false}
+}
+function showLoggedOut(){
+  currentUser=null;cloudData={sale:[],acc:[],sup:[],stock:[]};
+  document.getElementById("shopApp").hidden=true;
+  document.getElementById("loginPanel").hidden=false;
+  document.getElementById("password").value="";
+}
+async function enterShop(user){
+  currentUser=user;
+  document.getElementById("accountEmail").textContent=user.email+" ";
+  document.getElementById("shopApp").hidden=false;
+  document.getElementById("loginPanel").hidden=true;
+  await refreshCloud();
+}
+async function logout(){
+  if(writing || loading) return;
+  const {error}=await db.auth.signOut();
+  if(error){status("退出失败："+error.message);return}
+  showLoggedOut();location.reload();
+}
+function exportBackup(){
+  if(!currentUser || loading || writing) return;
+  const blob=new Blob([JSON.stringify({version:1,user:currentUser.email,exportedAt:new Date().toISOString(),data:cloudData},null,2)],{type:"application/json"});
+  const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download="欧菲服饰备份-"+getToday()+".json";a.click();
+  setTimeout(()=>URL.revokeObjectURL(a.href),1000);
+}
+async function boot(){
+  const message=document.getElementById("loginMessage");
+  if(!db){message.textContent="登录组件加载失败，请检查网络后刷新页面。";return}
+  document.getElementById("loginForm").onsubmit=async event=>{
+    event.preventDefault();
+    const button=document.getElementById("loginButton");button.disabled=true;message.textContent="正在登录…";
+    try{
+      const {data,error}=await db.auth.signInWithPassword({email:document.getElementById("email").value.trim(),password:document.getElementById("password").value});
+      if(error) throw error;
+      document.getElementById("password").value="";message.textContent="";
+      await enterShop(data.user);
+    }catch(error){message.textContent="登录失败："+error.message}
+    finally{button.disabled=false}
+  };
+  const {data,error}=await db.auth.getSession();
+  if(error){message.textContent="读取登录状态失败："+error.message;return}
+  if(data.session) await enterShop(data.session.user);
+  db.auth.onAuthStateChange((event,session)=>{
+    if(event==="SIGNED_OUT") showLoggedOut();
+  });
 }
 // 切换页面
 function switchTab(name){
@@ -150,7 +258,8 @@ function switchTab(name){
   renderAll()
 }
 // 日期默认今天
-function getToday(){return new Date().toISOString().split('T')[0]}
+function localDate(d){return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0")}
+function getToday(){return localDate(new Date())}
 // 全局渲染
 function renderAll(){
   renderDash();renderSale();renderAccount();renderSupplier();renderStock();
@@ -195,7 +304,7 @@ function renderDash(){
     totalDebt+=Number(item.money);
     const end=new Date(item.endDate);
     const today=new Date();
-    if(end<today) debtAlert+=`<div class="text-red-500">⚠️${item.name}欠款已到期</div>`
+    if(end<today) debtAlert+=`<div class="text-red-500">⚠️${escapeHTML(item.name)}欠款已到期</div>`
   })
   document.getElementById('totalDebt').innerText=totalDebt.toFixed(2);
   document.getElementById('debtTips').innerHTML=debtAlert;
@@ -203,13 +312,14 @@ function renderDash(){
   const days=[];const saleData=[];
   for(let i=6;i>=0;i--){
     const dt=new Date();dt.setDate(dt.getDate()-i);
-    const ds=dt.toISOString().split('T')[0];
+    const ds=localDate(dt);
     days.push(dt.getMonth()+1+"/"+dt.getDate());
     let sv=0;
     d.sale.forEach(s=>{if(s.date===ds) sv+=s.totalSale})
     saleData.push(sv);
   }
   if(chartIns) chartIns.destroy();
+  if(typeof Chart==="undefined") return;
   chartIns=new Chart(document.getElementById('saleChart'),{
     type:'line',data:{labels:days,datasets:[{label:'销售额',data:saleData,borderColor:'#c2410c'}]},
     options:{responsive:true,maintainAspectRatio:true}
@@ -243,7 +353,7 @@ function calcOneSaleProfit(){
   })
   document.getElementById('oneProfit').innerText=totalP.toFixed(2);
 }
-function saveSale(){
+async function saveSale(){
   const date=document.getElementById('saleDate').value||getToday();
   const itemsDom=document.querySelectorAll("#saleItems > div");
   const items=[];
@@ -263,7 +373,7 @@ function saveSale(){
   const rec=Number(document.getElementById('saleReceive').value||0);
   const d=loadData();
   d.sale.push({date,items,totalSale,totalProfit,receive:rec});
-  saveData(KEY.sale,d.sale);
+  await saveData(KEY.sale,d.sale);
   document.getElementById('saleItems').innerHTML="";saleItemCount=0;
   document.getElementById('saleReceive').value="";
   alert("保存成功");renderAll();
@@ -275,14 +385,14 @@ function renderSale(){
   d.sale.slice(-10).reverse().forEach((item,idx)=>{
     const div=document.createElement('div');
     div.className="bg-white p-2 rounded shadow my-2";
-    div.innerHTML=`日期：${item.date}<br>销售额：${item.totalSale}元，毛利：${item.totalProfit}元`;
+    div.innerHTML=`日期：${escapeHTML(item.date)}<br>销售额：${item.totalSale}元，毛利：${item.totalProfit}元`;
     listDom.appendChild(div);
   })
-  document.getElementById('saleDate').value=getToday();
+  if(!document.getElementById('saleDate').value) document.getElementById('saleDate').value=getToday();
 }
 
 // ==========记账==========
-function saveAccount(){
+async function saveAccount(){
   const date=document.getElementById('accDate').value||getToday();
   const type=document.getElementById('accType').value;
   const cate=document.getElementById('accCate').value;
@@ -291,7 +401,7 @@ function saveAccount(){
   if(money<=0){alert("请填金额");return;}
   const d=loadData();
   d.acc.push({date,type,cate,money,remark});
-  saveData(KEY.acc,d.acc);
+  await saveData(KEY.acc,d.acc);
   document.getElementById('accMoney').value="";document.getElementById('accRemark').value="";
   alert("保存成功");renderAll();
 }
@@ -303,14 +413,14 @@ function renderAccount(){
     const div=document.createElement('div');
     div.className="bg-white p-2 rounded shadow my-2";
     const t=item.type==='in'?"收入":"支出";
-    div.innerHTML=`${item.date} ${t}【${item.cate}】 ${item.money}元 ${item.remark}`;
+    div.innerHTML=`${escapeHTML(item.date)} ${t}【${escapeHTML(item.cate)}】 ${item.money}元 ${escapeHTML(item.remark)}`;
     listDom.appendChild(div);
   })
-  document.getElementById('accDate').value=getToday();
+  if(!document.getElementById('accDate').value) document.getElementById('accDate').value=getToday();
 }
 
 // ==========供应商欠款==========
-function saveSupplier(){
+async function saveSupplier(){
   const name=document.getElementById('supName').value;
   const money=Number(document.getElementById('supMoney').value||0);
   const sDate=document.getElementById('supStart').value;
@@ -319,7 +429,7 @@ function saveSupplier(){
   if(!name || money<=0 ||!sDate||!eDate){alert("填全信息");return;}
   const d=loadData();
   d.sup.push({name,money,startDate:sDate,endDate:eDate,remark});
-  saveData(KEY.sup,d.sup);
+  await saveData(KEY.sup,d.sup);
   document.getElementById('supName').value="";document.getElementById('supMoney').value="";
   document.getElementById('supRemark').value="";
   alert("保存成功");renderAll();
@@ -331,21 +441,21 @@ function renderSupplier(){
   d.sup.forEach(item=>{
     const div=document.createElement('div');
     div.className="bg-white p-2 rounded shadow my-2";
-    div.innerHTML=`${item.name}：${item.money}元<br>欠款：${item.startDate}｜还款：${item.endDate}<br>${item.remark}`;
+    div.innerHTML=`${escapeHTML(item.name)}：${item.money}元<br>欠款：${escapeHTML(item.startDate)}｜还款：${escapeHTML(item.endDate)}<br>${escapeHTML(item.remark)}`;
     listDom.appendChild(div);
   })
-  document.getElementById('supStart').value=getToday();
+  if(!document.getElementById('supStart').value) document.getElementById('supStart').value=getToday();
 }
 
 // ==========库存==========
-function saveStock(){
+async function saveStock(){
   const name=document.getElementById('stockName').value;
   const cost=Number(document.getElementById('stockCost').value||0);
   const num=Number(document.getElementById('stockNum').value||0);
   if(!name){alert("填写货品名称");return;}
   const d=loadData();
   d.stock.push({name,cost,num});
-  saveData(KEY.stock,d.stock);
+  await saveData(KEY.stock,d.stock);
   document.getElementById('stockName').value="";document.getElementById('stockCost').value="";document.getElementById('stockNum').value="";
   alert("保存成功");renderAll();
 }
@@ -356,12 +466,27 @@ function renderStock(){
   d.stock.forEach(item=>{
     const div=document.createElement('div');
     div.className="bg-white p-2 rounded shadow my-2";
-    div.innerHTML=`货品：${item.name}<br>成本：${item.cost}元｜数量：${item.num}`;
+    div.innerHTML=`货品：${escapeHTML(item.name)}<br>成本：${item.cost}元｜数量：${item.num}`;
     listDom.appendChild(div);
   })
 }
 
-window.onload=renderAll;
+
+for(const name of ["saveSale","saveAccount","saveSupplier","saveStock"]){
+  const original=window[name];
+  window[name]=async function(){
+    if(writing || loading) return;
+    if(!currentUser){alert("请先登录");return}
+    writing=true;
+    const buttons=[...document.querySelectorAll("#shopApp button")];
+    buttons.forEach(b=>b.disabled=true);
+    try{await original()}
+    catch(error){status("保存失败："+error.message);alert("未确认保存成功，请保留输入并检查网络。错误："+error.message)}
+    finally{writing=false;buttons.forEach(b=>b.disabled=false)}
+  };
+}
+window.onload=()=>boot().catch(error=>{document.getElementById("loginMessage").textContent="初始化失败："+error.message});
+
 </script>
 </body>
 </html>
