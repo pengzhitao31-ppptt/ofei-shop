@@ -1,0 +1,367 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>欧菲服饰店经营工作台</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.8/dist/chart.umd.min.js"></script>
+<script>
+tailwind.config = {
+  theme:{
+    extend:{
+      colors:{primary:'#c2410c'},
+      fontFamily:{sans:['system-ui']}
+    }
+  }
+}
+</script>
+<style>
+*{font-size:17px;}
+button{min-height:48px;}
+input,select{min-height:46px;font-size:17px;}
+.tab-page{display:none;}
+.tab-page.active{display:block;}
+</style>
+</head>
+<body class="bg-amber-50 pb-20">
+<div class="bg-primary text-white p-4 text-center text-xl font-bold">欧菲服饰店经营工作台</div>
+
+<!-- 看板 -->
+<div id="page-dashboard" class="tab-page active p-4">
+<h2 class="text-lg font-bold mb-4">📊 经营数据看板</h2>
+<div class="grid grid-cols-2 gap-3 mb-4">
+<div class="bg-white p-3 rounded-lg shadow"><div class="text-gray-500 text-sm">今日销售额</div><div class="text-xl font-bold text-primary" id="saleToday">0</div></div>
+<div class="bg-white p-3 rounded-lg shadow"><div class="text-gray-500 text-sm">本月销售额</div><div class="text-xl font-bold text-primary" id="saleMonth">0</div></div>
+<div class="bg-white p-3 rounded-lg shadow"><div class="text-gray-500 text-sm">今日毛利</div><div class="text-xl font-bold text-green-600" id="profitToday">0</div></div>
+<div class="bg-white p-3 rounded-lg shadow"><div class="text-gray-500 text-sm">本月毛利</div><div class="text-xl font-bold text-green-600" id="profitMonth">0</div></div>
+<div class="bg-white p-3 rounded-lg shadow"><div class="text-gray-500 text-sm">本月总支出</div><div class="text-xl font-bold text-red-600" id="expMonth">0</div></div>
+<div class="bg-white p-3 rounded-lg shadow"><div class="text-gray-500 text-sm">本月净盈利</div><div class="text-xl font-bold text-blue-600" id="netMonth">0</div></div>
+</div>
+<div class="bg-white p-3 rounded-lg shadow mb-4">
+<h3 class="font-bold mb-2">销售趋势</h3>
+<canvas id="saleChart"></canvas>
+</div>
+<div class="bg-white p-3 rounded-lg shadow">
+<h3 class="font-bold mb-2">供应商总欠款：<span id="totalDebt" class="text-red-600">0</span>元</h3>
+<div id="debtTips"></div>
+</div>
+</div>
+
+<!-- 开单 -->
+<div id="page-sale" class="tab-page p-4">
+<h2 class="text-lg font-bold mb-4">🛒 销售开单</h2>
+<div class="bg-white p-4 rounded-lg shadow mb-4">
+<div class="mb-3"><label>日期</label><input type="date" id="saleDate" class="w-full border rounded px-2"></div>
+<div id="saleItems"></div>
+<button onclick="addSaleItem()" class="w-full bg-slate-200 rounded my-2">➕ 添加一件商品</button>
+<div class="mb-3"><label>实收金额(元)</label><input type="number" id="saleReceive" class="w-full border rounded px-2" min="0" step="0.01"></div>
+<div class="mb-3 text-lg">这笔订单毛利：<span id="oneProfit">0</span>元</div>
+<button onclick="saveSale()" class="w-full bg-primary text-white rounded">✅ 保存这单</button>
+</div>
+<div id="saleList"></div>
+</div>
+
+<!-- 记账 -->
+<div id="page-account" class="tab-page p-4">
+<h2 class="text-lg font-bold mb-4">💰 收支记账</h2>
+<div class="bg-white p-4 rounded-lg shadow mb-4">
+<div class="mb-3"><label>日期</label><input type="date" id="accDate" class="w-full border rounded px-2"></div>
+<div class="mb-3">
+<label>收支类型</label>
+<select id="accType" class="w-full border rounded px-2">
+<option value="in">收入</option>
+<option value="out">支出</option>
+</select>
+</div>
+<div class="mb-3">
+<label>分类</label>
+<select id="accCate" class="w-full border rounded px-2">
+<option value="零售卖货">零售卖货</option>
+<option value="退换货">退换货</option>
+<option value="货款">货款</option>
+<option value="房租">房租</option>
+<option value="人工">人工</option>
+<option value="水电">水电</option>
+<option value="杂费">杂费</option>
+</select>
+</div>
+<div class="mb-3"><label>金额(元)</label><input type="number" id="accMoney" class="w-full border rounded px-2" min="0" step="0.01"></div>
+<div class="mb-3"><label>备注</label><input id="accRemark" class="w-full border rounded px-2"></div>
+<button onclick="saveAccount()" class="w-full bg-primary text-white rounded">✅ 保存记录</button>
+</div>
+<div id="accList"></div>
+</div>
+
+<!-- 供应商欠款 -->
+<div id="page-supplier" class="tab-page p-4">
+<h2 class="text-lg font-bold mb-4">🤝 供应商欠款</h2>
+<div class="bg-white p-4 rounded-lg shadow mb-4">
+<div class="mb-3"><label>供应商名称</label><input id="supName" class="w-full border rounded px-2"></div>
+<div class="mb-3"><label>欠款金额(元)</label><input type="number" id="supMoney" class="w-full border rounded px-2" min="0" step="0.01"></div>
+<div class="mb-3"><label>欠款日期</label><input type="date" id="supStart" class="w-full border rounded px-2"></div>
+<div class="mb-3"><label>约定还款日期</label><input type="date" id="supEnd" class="w-full border rounded px-2"></div>
+<div class="mb-3"><label>备注</label><input id="supRemark" class="w-full border rounded px-2"></div>
+<button onclick="saveSupplier()" class="w-full bg-primary text-white rounded">✅ 保存欠款</button>
+</div>
+<div id="supList"></div>
+</div>
+
+<!-- 库存 -->
+<div id="page-stock" class="tab-page p-4">
+<h2 class="text-lg font-bold mb-4">📦 库存</h2>
+<div class="bg-white p-4 rounded-lg shadow mb-4">
+<div class="mb-3"><label>货品名称</label><input id="stockName" class="w-full border rounded px-2"></div>
+<div class="mb-3"><label>进货成本(元)</label><input type="number" id="stockCost" class="w-full border rounded px-2" min="0" step="0.01"></div>
+<div class="mb-3"><label>库存数量</label><input type="number" id="stockNum" class="w-full border rounded px-2" min="0"></div>
+<button onclick="saveStock()" class="w-full bg-primary text-white rounded">✅ 保存货品</button>
+</div>
+<div id="stockList"></div>
+</div>
+
+<!-- 底部导航 -->
+<div class="fixed bottom-0 left-0 right-0 bg-white border-t flex">
+<button onclick="switchTab('dashboard')" class="flex-1 py-3 tab-btn">📊看板</button>
+<button onclick="switchTab('sale')" class="flex-1 py-3 tab-btn">🛒开单</button>
+<button onclick="switchTab('account')" class="flex-1 py-3 tab-btn">💰记账</button>
+<button onclick="switchTab('supplier')" class="flex-1 py-3 tab-btn">🤝欠款</button>
+<button onclick="switchTab('stock')" class="flex-1 py-3 tab-btn">📦库存</button>
+</div>
+
+<script>
+// 本地存储key
+const KEY={sale:"of_sale",acc:"of_acc",sup:"of_sup",stock:"of_stock"}
+// 初始化数据
+function loadData(){
+  return{
+    sale:JSON.parse(localStorage.getItem(KEY.sale)||"[]"),
+    acc:JSON.parse(localStorage.getItem(KEY.acc)||"[]"),
+    sup:JSON.parse(localStorage.getItem(KEY.sup)||"[]"),
+    stock:JSON.parse(localStorage.getItem(KEY.stock)||"[]")
+  }
+}
+function saveData(key,data){
+  localStorage.setItem(key,JSON.stringify(data));
+}
+// 切换页面
+function switchTab(name){
+  document.querySelectorAll('.tab-page').forEach(p=>p.classList.remove('active'))
+  document.getElementById('page-'+name).classList.add('active')
+  renderAll()
+}
+// 日期默认今天
+function getToday(){return new Date().toISOString().split('T')[0]}
+// 全局渲染
+function renderAll(){
+  renderDash();renderSale();renderAccount();renderSupplier();renderStock();
+}
+
+// ==========看板==========
+let chartIns=null;
+function renderDash(){
+  const d=loadData();
+  const now=new Date();
+  const curMonth=now.getMonth()+1;
+  const curYear=now.getFullYear();
+  //今日
+  let saleToday=0,profitToday=0;
+  let saleMonth=0,profitMonth=0,expMonth=0;
+  d.sale.forEach(s=>{
+    const sd=new Date(s.date);
+    if(sd.toDateString()===now.toDateString()){
+      saleToday+=s.totalSale;profitToday+=s.totalProfit;
+    }
+    if(sd.getMonth()+1===curMonth && sd.getFullYear()===curYear){
+      saleMonth+=s.totalSale;profitMonth+=s.totalProfit;
+    }
+  })
+  d.acc.forEach(a=>{
+    const ad=new Date(a.date);
+    if(ad.getMonth()+1===curMonth && ad.getFullYear()===curYear){
+      if(a.type==='out') expMonth+=Number(a.money);
+    }
+  })
+  const netMonth=profitMonth-expMonth;
+  document.getElementById('saleToday').innerText=saleToday.toFixed(2);
+  document.getElementById('profitToday').innerText=profitToday.toFixed(2);
+  document.getElementById('saleMonth').innerText=saleMonth.toFixed(2);
+  document.getElementById('profitMonth').innerText=profitMonth.toFixed(2);
+  document.getElementById('expMonth').innerText=expMonth.toFixed(2);
+  document.getElementById('netMonth').innerText=netMonth.toFixed(2);
+  //总欠款
+  let totalDebt=0;
+  let debtAlert=""
+  d.sup.forEach(item=>{
+    totalDebt+=Number(item.money);
+    const end=new Date(item.endDate);
+    const today=new Date();
+    if(end<today) debtAlert+=`<div class="text-red-500">⚠️${item.name}欠款已到期</div>`
+  })
+  document.getElementById('totalDebt').innerText=totalDebt.toFixed(2);
+  document.getElementById('debtTips').innerHTML=debtAlert;
+  //图表
+  const days=[];const saleData=[];
+  for(let i=6;i>=0;i--){
+    const dt=new Date();dt.setDate(dt.getDate()-i);
+    const ds=dt.toISOString().split('T')[0];
+    days.push(dt.getMonth()+1+"/"+dt.getDate());
+    let sv=0;
+    d.sale.forEach(s=>{if(s.date===ds) sv+=s.totalSale})
+    saleData.push(sv);
+  }
+  if(chartIns) chartIns.destroy();
+  chartIns=new Chart(document.getElementById('saleChart'),{
+    type:'line',data:{labels:days,datasets:[{label:'销售额',data:saleData,borderColor:'#c2410c'}]},
+    options:{responsive:true,maintainAspectRatio:true}
+  })
+}
+
+// ==========销售开单==========
+let saleItemCount=0;
+function addSaleItem(){
+  saleItemCount++;
+  const wrap=document.getElementById("saleItems");
+  const div=document.createElement('div');
+  div.className="border rounded p-2 mb-2";
+  div.innerHTML=`
+    <div>货品：<input class="sale-name w-full border rounded my-1"></div>
+    <div>数量：<input type="number" min="0" step="1" class="sale-num w-full border rounded my-1"></div>
+    <div>售价：<input type="number" min="0" step="0.01" class="sale-price w-full border rounded my-1"></div>
+    <div>成本：<input type="number" min="0" step="0.01" class="sale-cost w-full border rounded my-1"></div>
+  `;
+  wrap.appendChild(div);
+  wrap.querySelectorAll('input').forEach(i=>i.oninput=calcOneSaleProfit);
+}
+function calcOneSaleProfit(){
+  const items=document.querySelectorAll("#saleItems > div");
+  let totalP=0;
+  items.forEach(box=>{
+    const num=Number(box.querySelector('.sale-num').value||0);
+    const price=Number(box.querySelector('.sale-price').value||0);
+    const cost=Number(box.querySelector('.sale-cost').value||0);
+    totalP += num*(price-cost);
+  })
+  document.getElementById('oneProfit').innerText=totalP.toFixed(2);
+}
+function saveSale(){
+  const date=document.getElementById('saleDate').value||getToday();
+  const itemsDom=document.querySelectorAll("#saleItems > div");
+  const items=[];
+  let totalSale=0;let totalProfit=0;
+  itemsDom.forEach(box=>{
+    const name=box.querySelector('.sale-name').value;
+    const num=Number(box.querySelector('.sale-num').value||0);
+    const price=Number(box.querySelector('.sale-price').value||0);
+    const cost=Number(box.querySelector('.sale-cost').value||0);
+    if(name&&num>0){
+      items.push({name,num,price,cost});
+      totalSale += num*price;
+      totalProfit += num*(price-cost);
+    }
+  })
+  if(items.length===0){alert("请添加商品");return;}
+  const rec=Number(document.getElementById('saleReceive').value||0);
+  const d=loadData();
+  d.sale.push({date,items,totalSale,totalProfit,receive:rec});
+  saveData(KEY.sale,d.sale);
+  document.getElementById('saleItems').innerHTML="";saleItemCount=0;
+  document.getElementById('saleReceive').value="";
+  alert("保存成功");renderAll();
+}
+function renderSale(){
+  const d=loadData();
+  const listDom=document.getElementById('saleList');
+  listDom.innerHTML="<h3 class='font-bold'>销售记录</h3>";
+  d.sale.slice(-10).reverse().forEach((item,idx)=>{
+    const div=document.createElement('div');
+    div.className="bg-white p-2 rounded shadow my-2";
+    div.innerHTML=`日期：${item.date}<br>销售额：${item.totalSale}元，毛利：${item.totalProfit}元`;
+    listDom.appendChild(div);
+  })
+  document.getElementById('saleDate').value=getToday();
+}
+
+// ==========记账==========
+function saveAccount(){
+  const date=document.getElementById('accDate').value||getToday();
+  const type=document.getElementById('accType').value;
+  const cate=document.getElementById('accCate').value;
+  const money=Number(document.getElementById('accMoney').value||0);
+  const remark=document.getElementById('accRemark').value;
+  if(money<=0){alert("请填金额");return;}
+  const d=loadData();
+  d.acc.push({date,type,cate,money,remark});
+  saveData(KEY.acc,d.acc);
+  document.getElementById('accMoney').value="";document.getElementById('accRemark').value="";
+  alert("保存成功");renderAll();
+}
+function renderAccount(){
+  const d=loadData();
+  const listDom=document.getElementById('accList');
+  listDom.innerHTML="<h3 class='font-bold'>收支记录</h3>";
+  d.acc.slice(-10).reverse().forEach(item=>{
+    const div=document.createElement('div');
+    div.className="bg-white p-2 rounded shadow my-2";
+    const t=item.type==='in'?"收入":"支出";
+    div.innerHTML=`${item.date} ${t}【${item.cate}】 ${item.money}元 ${item.remark}`;
+    listDom.appendChild(div);
+  })
+  document.getElementById('accDate').value=getToday();
+}
+
+// ==========供应商欠款==========
+function saveSupplier(){
+  const name=document.getElementById('supName').value;
+  const money=Number(document.getElementById('supMoney').value||0);
+  const sDate=document.getElementById('supStart').value;
+  const eDate=document.getElementById('supEnd').value;
+  const remark=document.getElementById('supRemark').value;
+  if(!name || money<=0 ||!sDate||!eDate){alert("填全信息");return;}
+  const d=loadData();
+  d.sup.push({name,money,startDate:sDate,endDate:eDate,remark});
+  saveData(KEY.sup,d.sup);
+  document.getElementById('supName').value="";document.getElementById('supMoney').value="";
+  document.getElementById('supRemark').value="";
+  alert("保存成功");renderAll();
+}
+function renderSupplier(){
+  const d=loadData();
+  const listDom=document.getElementById('supList');
+  listDom.innerHTML="<h3 class='font-bold'>欠款列表</h3>";
+  d.sup.forEach(item=>{
+    const div=document.createElement('div');
+    div.className="bg-white p-2 rounded shadow my-2";
+    div.innerHTML=`${item.name}：${item.money}元<br>欠款：${item.startDate}｜还款：${item.endDate}<br>${item.remark}`;
+    listDom.appendChild(div);
+  })
+  document.getElementById('supStart').value=getToday();
+}
+
+// ==========库存==========
+function saveStock(){
+  const name=document.getElementById('stockName').value;
+  const cost=Number(document.getElementById('stockCost').value||0);
+  const num=Number(document.getElementById('stockNum').value||0);
+  if(!name){alert("填写货品名称");return;}
+  const d=loadData();
+  d.stock.push({name,cost,num});
+  saveData(KEY.stock,d.stock);
+  document.getElementById('stockName').value="";document.getElementById('stockCost').value="";document.getElementById('stockNum').value="";
+  alert("保存成功");renderAll();
+}
+function renderStock(){
+  const d=loadData();
+  const listDom=document.getElementById('stockList');
+  listDom.innerHTML="<h3 class='font-bold'>货品库存</h3>";
+  d.stock.forEach(item=>{
+    const div=document.createElement('div');
+    div.className="bg-white p-2 rounded shadow my-2";
+    div.innerHTML=`货品：${item.name}<br>成本：${item.cost}元｜数量：${item.num}`;
+    listDom.appendChild(div);
+  })
+}
+
+window.onload=renderAll;
+</script>
+</body>
+</html>
